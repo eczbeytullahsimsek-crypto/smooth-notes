@@ -1,7 +1,6 @@
 package com.smoothnotes.app;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -9,20 +8,18 @@ import android.graphics.Path;
 import android.view.MotionEvent;
 import android.view.View;
 
+import java.util.ArrayList;
+
 public class DrawingView extends View {
 
     private final Paint paint;
-    private Bitmap bitmap;
-    private Canvas bitmapCanvas;
+    private final ArrayList<Stroke> strokes = new ArrayList<>();
+
+    private Stroke currentStroke;
 
     private float lastX;
     private float lastY;
-    private float previousX;
-    private float previousY;
-
     private float lastPressure = 0.5f;
-
-    private boolean hasPreviousPoint = false;
 
     private static final float MIN_WIDTH = 1.8f;
     private static final float MAX_WIDTH = 6.5f;
@@ -30,10 +27,7 @@ public class DrawingView extends View {
     public DrawingView(Context context) {
         super(context);
 
-        paint = new Paint(
-                Paint.ANTI_ALIAS_FLAG |
-                Paint.DITHER_FLAG
-        );
+        paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
 
         paint.setColor(Color.BLACK);
         paint.setStyle(Paint.Style.STROKE);
@@ -48,60 +42,76 @@ public class DrawingView extends View {
     }
 
     @Override
-    protected void onSizeChanged(
-            int width,
-            int height,
-            int oldWidth,
-            int oldHeight
-    ) {
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
 
-        super.onSizeChanged(
-                width,
-                height,
-                oldWidth,
-                oldHeight
-        );
+        canvas.drawColor(Color.WHITE);
 
-        if (width <= 0 || height <= 0) {
+        for (Stroke stroke : strokes) {
+            drawStroke(canvas, stroke);
+        }
+
+        if (currentStroke != null) {
+            drawStroke(canvas, currentStroke);
+        }
+    }
+
+    private void drawStroke(Canvas canvas, Stroke stroke) {
+
+        int count = stroke.points.size();
+
+        if (count == 0) {
             return;
         }
 
-        Bitmap newBitmap = Bitmap.createBitmap(
-                width,
-                height,
-                Bitmap.Config.ARGB_8888
-        );
+        if (count == 1) {
 
-        Canvas newCanvas = new Canvas(newBitmap);
+            StrokePoint p = stroke.points.get(0);
 
-        newCanvas.drawColor(Color.WHITE);
+            paint.setStyle(Paint.Style.FILL);
 
-        if (bitmap != null) {
-            newCanvas.drawBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    null
+            canvas.drawCircle(
+                    p.x,
+                    p.y,
+                    p.width * 0.5f,
+                    paint
             );
 
-            bitmap.recycle();
+            paint.setStyle(Paint.Style.STROKE);
+
+            return;
         }
 
-        bitmap = newBitmap;
-        bitmapCanvas = newCanvas;
-    }
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
 
-    @Override
-    protected void onDraw(Canvas canvas) {
+        for (int i = 1; i < count; i++) {
 
-        super.onDraw(canvas);
+            StrokePoint p1 = stroke.points.get(i - 1);
+            StrokePoint p2 = stroke.points.get(i);
 
-        if (bitmap != null) {
-            canvas.drawBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    null
+            float dx = p2.x - p1.x;
+            float dy = p2.y - p1.y;
+
+            float distance =
+                    (float) Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < 0.5f) {
+                continue;
+            }
+
+            float width =
+                    (p1.width + p2.width) * 0.5f;
+
+            paint.setStrokeWidth(width);
+
+            canvas.drawLine(
+                    p1.x,
+                    p1.y,
+                    p2.x,
+                    p2.y,
+                    paint
             );
         }
     }
@@ -113,23 +123,18 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_DOWN:
 
+                currentStroke = new Stroke();
+                strokes.add(currentStroke);
+
                 lastX = event.getX();
                 lastY = event.getY();
 
-                previousX = lastX;
-                previousY = lastY;
+                lastPressure = getPressure(event);
 
-                lastPressure =
-                        getPressure(event);
-
-                hasPreviousPoint = false;
-
-                drawDot(
+                addPoint(
                         lastX,
                         lastY,
-                        getWidthForPressure(
-                                lastPressure
-                        )
+                        lastPressure
                 );
 
                 invalidate();
@@ -148,7 +153,7 @@ public class DrawingView extends View {
 
                 processMotion(event);
 
-                hasPreviousPoint = false;
+                currentStroke = null;
 
                 invalidate();
 
@@ -156,7 +161,9 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_CANCEL:
 
-                hasPreviousPoint = false;
+                currentStroke = null;
+
+                invalidate();
 
                 return true;
         }
@@ -164,12 +171,9 @@ public class DrawingView extends View {
         return true;
     }
 
-    private void processMotion(
-            MotionEvent event
-    ) {
+    private void processMotion(MotionEvent event) {
 
-        int history =
-                event.getHistorySize();
+        int history = event.getHistorySize();
 
         for (int i = 0; i < history; i++) {
 
@@ -193,7 +197,7 @@ public class DrawingView extends View {
             float pressure
     ) {
 
-        if (bitmapCanvas == null) {
+        if (currentStroke == null) {
             return;
         }
 
@@ -201,136 +205,93 @@ public class DrawingView extends View {
         float dy = y - lastY;
 
         float distance =
-                (float) Math.sqrt(
-                        dx * dx +
-                        dy * dy
-                );
+                (float) Math.sqrt(dx * dx + dy * dy);
 
-        if (distance < 0.7f) {
+        /*
+         * Çok yakın noktaları at.
+         * Bu ciddi şekilde performansı artırır.
+         */
+        if (distance < 1.2f) {
             return;
         }
 
+        /*
+         * Hafif pozisyon yumuşatma.
+         * Önceki 0.78 değerindeki agresif
+         * smoothing yerine çok daha hızlı tepki.
+         */
+        float smoothing = 0.35f;
+
+        float smoothX =
+                lastX + dx * smoothing;
+
+        float smoothY =
+                lastY + dy * smoothing;
+
+        /*
+         * Basınç filtreleme.
+         */
         float filteredPressure =
-                lastPressure * 0.30f +
-                pressure * 0.70f;
+                lastPressure * 0.35f +
+                pressure * 0.65f;
 
-        lastPressure =
-                filteredPressure;
+        lastPressure = filteredPressure;
 
+        /*
+         * Basınca göre kalınlık.
+         */
         float width =
-                getWidthForPressure(
-                        filteredPressure
-                );
+                MIN_WIDTH +
+                (MAX_WIDTH - MIN_WIDTH)
+                        * filteredPressure;
 
-        paint.setStrokeWidth(width);
-
-        if (!hasPreviousPoint) {
-
-            bitmapCanvas.drawLine(
-                    lastX,
-                    lastY,
-                    x,
-                    y,
-                    paint
-            );
-
-            previousX = lastX;
-            previousY = lastY;
-
-            hasPreviousPoint = true;
-
-        } else {
-
-            float midX =
-                    (lastX + x) * 0.5f;
-
-            float midY =
-                    (lastY + y) * 0.5f;
-
-            Path path = new Path();
-
-            path.moveTo(
-                    previousX,
-                    previousY
-            );
-
-            path.quadTo(
-                    lastX,
-                    lastY,
-                    midX,
-                    midY
-            );
-
-            bitmapCanvas.drawPath(
-                    path,
-                    paint
-            );
-
-            previousX = midX;
-            previousY = midY;
-        }
-
-        lastX = x;
-        lastY = y;
-    }
-
-    private void drawDot(
-            float x,
-            float y,
-            float width
-    ) {
-
-        if (bitmapCanvas == null) {
-            return;
-        }
-
-        paint.setStyle(Paint.Style.FILL);
-
-        bitmapCanvas.drawCircle(
-                x,
-                y,
-                width * 0.5f,
-                paint
+        currentStroke.points.add(
+                new StrokePoint(
+                        smoothX,
+                        smoothY,
+                        width
+                )
         );
 
-        paint.setStyle(Paint.Style.STROKE);
+        lastX = smoothX;
+        lastY = smoothY;
     }
 
-    private float getWidthForPressure(
-            float pressure
-    ) {
+    private float getPressure(MotionEvent event) {
 
-        pressure =
-                Math.max(
-                        0f,
-                        Math.min(
-                                1f,
-                                pressure
-                        )
-                );
-
-        return MIN_WIDTH +
-                (MAX_WIDTH - MIN_WIDTH)
-                        * pressure;
-    }
-
-    private float getPressure(
-            MotionEvent event
-    ) {
-
-        float pressure =
-                event.getPressure();
+        float pressure = event.getPressure();
 
         if (pressure <= 0f) {
             pressure = 0.5f;
         }
 
-        return Math.max(
-                0f,
-                Math.min(
-                        1f,
-                        pressure
-                )
-        );
+        if (pressure > 1f) {
+            pressure = 1f;
+        }
+
+        return pressure;
+    }
+
+    private static class Stroke {
+
+        final ArrayList<StrokePoint> points =
+                new ArrayList<>();
+    }
+
+    private static class StrokePoint {
+
+        final float x;
+        final float y;
+        final float width;
+
+        StrokePoint(
+                float x,
+                float y,
+                float width
+        ) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+        }
     }
 }
