@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -16,7 +17,12 @@ public class DrawingView extends View {
 
     private float lastX;
     private float lastY;
+    private float previousX;
+    private float previousY;
+
     private float lastPressure = 0.5f;
+
+    private boolean hasPreviousPoint = false;
 
     private static final float MIN_WIDTH = 1.8f;
     private static final float MAX_WIDTH = 6.5f;
@@ -91,7 +97,6 @@ public class DrawingView extends View {
         super.onDraw(canvas);
 
         if (bitmap != null) {
-
             canvas.drawBitmap(
                     bitmap,
                     0,
@@ -111,13 +116,20 @@ public class DrawingView extends View {
                 lastX = event.getX();
                 lastY = event.getY();
 
+                previousX = lastX;
+                previousY = lastY;
+
                 lastPressure =
                         getPressure(event);
+
+                hasPreviousPoint = false;
 
                 drawDot(
                         lastX,
                         lastY,
-                        getWidthForPressure(lastPressure)
+                        getWidthForPressure(
+                                lastPressure
+                        )
                 );
 
                 invalidate();
@@ -136,11 +148,15 @@ public class DrawingView extends View {
 
                 processMotion(event);
 
+                hasPreviousPoint = false;
+
                 invalidate();
 
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
+
+                hasPreviousPoint = false;
 
                 return true;
         }
@@ -148,7 +164,9 @@ public class DrawingView extends View {
         return true;
     }
 
-    private void processMotion(MotionEvent event) {
+    private void processMotion(
+            MotionEvent event
+    ) {
 
         int history =
                 event.getHistorySize();
@@ -188,7 +206,7 @@ public class DrawingView extends View {
                         dy * dy
                 );
 
-        if (distance < 0.5f) {
+        if (distance < 0.7f) {
             return;
         }
 
@@ -206,13 +224,51 @@ public class DrawingView extends View {
 
         paint.setStrokeWidth(width);
 
-        bitmapCanvas.drawLine(
-                lastX,
-                lastY,
-                x,
-                y,
-                paint
-        );
+        if (!hasPreviousPoint) {
+
+            bitmapCanvas.drawLine(
+                    lastX,
+                    lastY,
+                    x,
+                    y,
+                    paint
+            );
+
+            previousX = lastX;
+            previousY = lastY;
+
+            hasPreviousPoint = true;
+
+        } else {
+
+            float midX =
+                    (lastX + x) * 0.5f;
+
+            float midY =
+                    (lastY + y) * 0.5f;
+
+            Path path = new Path();
+
+            path.moveTo(
+                    previousX,
+                    previousY
+            );
+
+            path.quadTo(
+                    lastX,
+                    lastY,
+                    midX,
+                    midY
+            );
+
+            bitmapCanvas.drawPath(
+                    path,
+                    paint
+            );
+
+            previousX = midX;
+            previousY = midY;
+        }
 
         lastX = x;
         lastY = y;
@@ -244,13 +300,14 @@ public class DrawingView extends View {
             float pressure
     ) {
 
-        if (pressure < 0f) {
-            pressure = 0f;
-        }
-
-        if (pressure > 1f) {
-            pressure = 1f;
-        }
+        pressure =
+                Math.max(
+                        0f,
+                        Math.min(
+                                1f,
+                                pressure
+                        )
+                );
 
         return MIN_WIDTH +
                 (MAX_WIDTH - MIN_WIDTH)
@@ -268,10 +325,12 @@ public class DrawingView extends View {
             pressure = 0.5f;
         }
 
-        if (pressure > 1f) {
-            pressure = 1f;
-        }
-
-        return pressure;
+        return Math.max(
+                0f,
+                Math.min(
+                        1f,
+                        pressure
+                )
+        );
     }
 }
