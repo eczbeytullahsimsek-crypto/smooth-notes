@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -12,23 +13,18 @@ import java.util.ArrayList;
 public class DrawingView extends View {
 
     private final Paint paint;
+    private final ArrayList<Stroke> strokes = new ArrayList<>();
 
-    private final ArrayList<StrokePoint> points =
-            new ArrayList<>();
+    private Stroke currentStroke;
 
     private float smoothX;
     private float smoothY;
 
-    private float lastX;
-    private float lastY;
-
     private float lastPressure = 0.5f;
 
-    private static final float SMOOTHING = 0.70f;
-
-    private static final float MIN_WIDTH = 1.8f;
-
-    private static final float MAX_WIDTH = 8.0f;
+    private static final float SMOOTHING = 0.78f;
+    private static final float MIN_WIDTH = 1.6f;
+    private static final float MAX_WIDTH = 7.5f;
 
     public DrawingView(Context context) {
 
@@ -36,16 +32,14 @@ public class DrawingView extends View {
 
         paint = new Paint(
                 Paint.ANTI_ALIAS_FLAG |
-                Paint.DITHER_FLAG
+                Paint.DITHER_FLAG |
+                Paint.SUBPIXEL_TEXT_FLAG
         );
 
         paint.setColor(Color.BLACK);
-
-        paint.setStyle(Paint.Style.STROKE);
-
-        paint.setStrokeCap(Paint.Cap.ROUND);
-
-        paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setAntiAlias(true);
+        paint.setDither(true);
 
         setBackgroundColor(Color.WHITE);
 
@@ -62,29 +56,141 @@ public class DrawingView extends View {
 
         canvas.drawColor(Color.WHITE);
 
-        if (points.size() < 2) {
+        for (Stroke stroke : strokes) {
+            drawStroke(canvas, stroke);
+        }
+
+        if (currentStroke != null) {
+            drawStroke(canvas, currentStroke);
+        }
+    }
+
+    private void drawStroke(
+            Canvas canvas,
+            Stroke stroke
+    ) {
+
+        int count = stroke.points.size();
+
+        if (count == 0) {
             return;
         }
 
-        for (int i = 1; i < points.size(); i++) {
+        if (count == 1) {
 
-            StrokePoint a = points.get(i - 1);
+            StrokePoint p =
+                    stroke.points.get(0);
 
-            StrokePoint b = points.get(i);
+            paint.setColor(Color.BLACK);
 
-            float width =
-                    (a.width + b.width) / 2f;
-
-            paint.setStrokeWidth(width);
-
-            canvas.drawLine(
-                    a.x,
-                    a.y,
-                    b.x,
-                    b.y,
+            canvas.drawCircle(
+                    p.x,
+                    p.y,
+                    p.width / 2f,
                     paint
             );
+
+            return;
         }
+
+        for (int i = 0; i < count - 1; i++) {
+
+            StrokePoint p0 =
+                    stroke.points.get(
+                            Math.max(0, i - 1)
+                    );
+
+            StrokePoint p1 =
+                    stroke.points.get(i);
+
+            StrokePoint p2 =
+                    stroke.points.get(i + 1);
+
+            StrokePoint p3 =
+                    stroke.points.get(
+                            Math.min(
+                                    count - 1,
+                                    i + 2
+                            )
+                    );
+
+            int steps = 5;
+
+            for (int j = 0; j < steps; j++) {
+
+                float t =
+                        j / (float) steps;
+
+                float x =
+                        catmull(
+                                p0.x,
+                                p1.x,
+                                p2.x,
+                                p3.x,
+                                t
+                        );
+
+                float y =
+                        catmull(
+                                p0.y,
+                                p1.y,
+                                p2.y,
+                                p3.y,
+                                t
+                        );
+
+                float width =
+                        p1.width +
+                        (p2.width - p1.width)
+                                * t;
+
+                paint.setColor(Color.BLACK);
+
+                canvas.drawCircle(
+                        x,
+                        y,
+                        width / 2f,
+                        paint
+                );
+            }
+        }
+
+        StrokePoint last =
+                stroke.points.get(count - 1);
+
+        paint.setColor(Color.BLACK);
+
+        canvas.drawCircle(
+                last.x,
+                last.y,
+                last.width / 2f,
+                paint
+        );
+    }
+
+    private float catmull(
+            float p0,
+            float p1,
+            float p2,
+            float p3,
+            float t
+    ) {
+
+        float t2 = t * t;
+        float t3 = t2 * t;
+
+        return 0.5f * (
+                (2f * p1) +
+                (-p0 + p2) * t +
+                (2f * p0 -
+                        5f * p1 +
+                        4f * p2 -
+                        p3) * t2 +
+                (-p0 +
+                        3f * p1 -
+                        3f * p2 +
+                        p3) * t3
+        );
     }
 
     @Override
@@ -96,25 +202,26 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_DOWN:
 
-                smoothX = event.getX();
+                currentStroke =
+                        new Stroke();
 
-                smoothY = event.getY();
+                strokes.add(
+                        currentStroke
+                );
 
-                lastX = smoothX;
+                smoothX =
+                        event.getX();
 
-                lastY = smoothY;
+                smoothY =
+                        event.getY();
 
                 lastPressure =
                         getPressure(event);
 
-                points.add(
-                        new StrokePoint(
-                                smoothX,
-                                smoothY,
-                                calculateWidth(
-                                        lastPressure
-                                )
-                        )
+                addPoint(
+                        smoothX,
+                        smoothY,
+                        lastPressure
                 );
 
                 invalidate();
@@ -132,6 +239,16 @@ public class DrawingView extends View {
             case MotionEvent.ACTION_UP:
 
                 processMotion(event);
+
+                currentStroke = null;
+
+                invalidate();
+
+                return true;
+
+            case MotionEvent.ACTION_CANCEL:
+
+                currentStroke = null;
 
                 invalidate();
 
@@ -172,6 +289,10 @@ public class DrawingView extends View {
             float pressure
     ) {
 
+        if (currentStroke == null) {
+            return;
+        }
+
         smoothX +=
                 (x - smoothX) *
                 SMOOTHING;
@@ -181,60 +302,24 @@ public class DrawingView extends View {
                 SMOOTHING;
 
         float filteredPressure =
-                lastPressure * 0.35f +
-                pressure * 0.65f;
+                lastPressure * 0.25f +
+                pressure * 0.75f;
 
         lastPressure =
                 filteredPressure;
 
-        float velocityX =
-                smoothX - lastX;
-
-        float velocityY =
-                smoothY - lastY;
-
-        float velocity =
-                (float) Math.sqrt(
-                        velocityX * velocityX +
-                        velocityY * velocityY
-                );
-
-        float velocityFactor =
-                Math.max(
-                        0.65f,
-                        Math.min(
-                                1.0f,
-                                1.0f -
-                                velocity * 0.01f
-                        )
-                );
-
         float width =
                 MIN_WIDTH +
                 (MAX_WIDTH - MIN_WIDTH)
-                        * filteredPressure
-                        * velocityFactor;
+                        * filteredPressure;
 
-        points.add(
+        currentStroke.points.add(
                 new StrokePoint(
                         smoothX,
                         smoothY,
                         width
                 )
         );
-
-        lastX = smoothX;
-
-        lastY = smoothY;
-    }
-
-    private float calculateWidth(
-            float pressure
-    ) {
-
-        return MIN_WIDTH +
-                (MAX_WIDTH - MIN_WIDTH)
-                        * pressure;
     }
 
     private float getPressure(
@@ -245,7 +330,6 @@ public class DrawingView extends View {
                 event.getPressure();
 
         if (pressure <= 0f) {
-
             pressure = 0.5f;
         }
 
@@ -258,12 +342,16 @@ public class DrawingView extends View {
         );
     }
 
+    private static class Stroke {
+
+        final ArrayList<StrokePoint> points =
+                new ArrayList<>();
+    }
+
     private static class StrokePoint {
 
         final float x;
-
         final float y;
-
         final float width;
 
         StrokePoint(
@@ -273,9 +361,7 @@ public class DrawingView extends View {
         ) {
 
             this.x = x;
-
             this.y = y;
-
             this.width = width;
         }
     }
