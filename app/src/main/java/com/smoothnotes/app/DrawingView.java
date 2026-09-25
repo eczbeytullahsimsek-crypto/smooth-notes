@@ -16,17 +16,28 @@ public class DrawingView extends View {
     private float lastX;
     private float lastY;
 
+    private float p0x;
+    private float p0y;
+
+    private float p1x;
+    private float p1y;
+
     private float smoothX;
     private float smoothY;
 
-    private static final float SMOOTHING = 0.65f;
-    private static final float MIN_WIDTH = 2.0f;
+    private float lastPressure = 0.5f;
+
+    private static final float SMOOTHING = 0.72f;
+    private static final float MIN_WIDTH = 1.5f;
     private static final float MAX_WIDTH = 8.0f;
 
     public DrawingView(Context context) {
         super(context);
 
-        paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        paint = new Paint(
+                Paint.ANTI_ALIAS_FLAG |
+                Paint.DITHER_FLAG
+        );
 
         paint.setColor(Color.BLACK);
         paint.setStyle(Paint.Style.STROKE);
@@ -62,9 +73,15 @@ public class DrawingView extends View {
                 smoothX = lastX;
                 smoothY = lastY;
 
-                path.moveTo(smoothX, smoothY);
+                p0x = lastX;
+                p0y = lastY;
 
-                updatePressure(event);
+                p1x = lastX;
+                p1y = lastY;
+
+                lastPressure = getPressure(event);
+
+                path.moveTo(lastX, lastY);
 
                 invalidate();
 
@@ -72,26 +89,7 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_MOVE:
 
-                float x = event.getX();
-                float y = event.getY();
-
-                smoothX += (x - smoothX) * SMOOTHING;
-                smoothY += (y - smoothY) * SMOOTHING;
-
-                float midX = (lastX + smoothX) / 2f;
-                float midY = (lastY + smoothY) / 2f;
-
-                path.quadTo(
-                        lastX,
-                        lastY,
-                        midX,
-                        midY
-                );
-
-                lastX = smoothX;
-                lastY = smoothY;
-
-                updatePressure(event);
+                processMove(event);
 
                 invalidate();
 
@@ -99,9 +97,10 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_UP:
 
-                path.lineTo(smoothX, smoothY);
+                smoothX = event.getX();
+                smoothY = event.getY();
 
-                updatePressure(event);
+                path.lineTo(smoothX, smoothY);
 
                 invalidate();
 
@@ -113,20 +112,110 @@ public class DrawingView extends View {
         }
     }
 
-    private void updatePressure(MotionEvent event) {
+    private void processMove(MotionEvent event) {
 
-        float pressure = event.getPressure();
+        int historySize = event.getHistorySize();
+
+        for (int i = 0; i < historySize; i++) {
+
+            float x = event.getHistoricalX(i);
+            float y = event.getHistoricalY(i);
+            float pressure = event.getHistoricalPressure(i);
+
+            addPoint(x, y, pressure);
+        }
+
+        addPoint(
+                event.getX(),
+                event.getY(),
+                getPressure(event)
+        );
+    }
+
+    private void addPoint(
+            float x,
+            float y,
+            float pressure
+    ) {
+
+        smoothX +=
+                (x - smoothX) *
+                SMOOTHING;
+
+        smoothY +=
+                (y - smoothY) *
+                SMOOTHING;
+
+        float velocityX =
+                smoothX - lastX;
+
+        float velocityY =
+                smoothY - lastY;
+
+        float velocity =
+                (float) Math.sqrt(
+                        velocityX * velocityX +
+                        velocityY * velocityY
+                );
+
+        float velocityFactor =
+                Math.max(
+                        0.55f,
+                        Math.min(
+                                1.0f,
+                                1.0f - velocity * 0.015f
+                        )
+                );
+
+        float filteredPressure =
+                lastPressure * 0.35f +
+                pressure * 0.65f;
+
+        lastPressure =
+                filteredPressure;
+
+        float width =
+                MIN_WIDTH +
+                (MAX_WIDTH - MIN_WIDTH)
+                        * filteredPressure
+                        * velocityFactor;
+
+        paint.setStrokeWidth(width);
+
+        float midX =
+                (lastX + smoothX) / 2f;
+
+        float midY =
+                (lastY + smoothY) / 2f;
+
+        path.quadTo(
+                lastX,
+                lastY,
+                midX,
+                midY
+        );
+
+        lastX = smoothX;
+        lastY = smoothY;
+    }
+
+    private float getPressure(
+            MotionEvent event
+    ) {
+
+        float pressure =
+                event.getPressure();
 
         if (pressure <= 0f) {
             pressure = 0.5f;
         }
 
-        pressure = Math.max(0f, Math.min(1f, pressure));
-
-        float width =
-                MIN_WIDTH +
-                (MAX_WIDTH - MIN_WIDTH) * pressure;
-
-        paint.setStrokeWidth(width);
+        return Math.max(
+                0f,
+                Math.min(
+                        1f,
+                        pressure
+                )
+        );
     }
 }
