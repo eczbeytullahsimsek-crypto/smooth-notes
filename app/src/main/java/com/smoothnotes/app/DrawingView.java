@@ -4,34 +4,34 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.view.MotionEvent;
 import android.view.View;
+
+import java.util.ArrayList;
 
 public class DrawingView extends View {
 
     private final Paint paint;
-    private final Path path;
 
-    private float lastX;
-    private float lastY;
-
-    private float p0x;
-    private float p0y;
-
-    private float p1x;
-    private float p1y;
+    private final ArrayList<StrokePoint> points =
+            new ArrayList<>();
 
     private float smoothX;
     private float smoothY;
 
+    private float lastX;
+    private float lastY;
+
     private float lastPressure = 0.5f;
 
-    private static final float SMOOTHING = 0.72f;
-    private static final float MIN_WIDTH = 1.5f;
+    private static final float SMOOTHING = 0.70f;
+
+    private static final float MIN_WIDTH = 1.8f;
+
     private static final float MAX_WIDTH = 8.0f;
 
     public DrawingView(Context context) {
+
         super(context);
 
         paint = new Paint(
@@ -40,48 +40,82 @@ public class DrawingView extends View {
         );
 
         paint.setColor(Color.BLACK);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setStrokeJoin(Paint.Join.ROUND);
-        paint.setStrokeWidth(4f);
 
-        path = new Path();
+        paint.setStyle(Paint.Style.STROKE);
+
+        paint.setStrokeCap(Paint.Cap.ROUND);
+
+        paint.setStrokeJoin(Paint.Join.ROUND);
 
         setBackgroundColor(Color.WHITE);
 
-        setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        setLayerType(
+                View.LAYER_TYPE_HARDWARE,
+                null
+        );
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
+
         super.onDraw(canvas);
 
         canvas.drawColor(Color.WHITE);
-        canvas.drawPath(path, paint);
+
+        if (points.size() < 2) {
+            return;
+        }
+
+        for (int i = 1; i < points.size(); i++) {
+
+            StrokePoint a = points.get(i - 1);
+
+            StrokePoint b = points.get(i);
+
+            float width =
+                    (a.width + b.width) / 2f;
+
+            paint.setStrokeWidth(width);
+
+            canvas.drawLine(
+                    a.x,
+                    a.y,
+                    b.x,
+                    b.y,
+                    paint
+            );
+        }
     }
 
     @Override
-    public boolean onTouchEvent(MotionEvent event) {
+    public boolean onTouchEvent(
+            MotionEvent event
+    ) {
 
         switch (event.getActionMasked()) {
 
             case MotionEvent.ACTION_DOWN:
 
-                lastX = event.getX();
-                lastY = event.getY();
+                smoothX = event.getX();
 
-                smoothX = lastX;
-                smoothY = lastY;
+                smoothY = event.getY();
 
-                p0x = lastX;
-                p0y = lastY;
+                lastX = smoothX;
 
-                p1x = lastX;
-                p1y = lastY;
+                lastY = smoothY;
 
-                lastPressure = getPressure(event);
+                lastPressure =
+                        getPressure(event);
 
-                path.moveTo(lastX, lastY);
+                points.add(
+                        new StrokePoint(
+                                smoothX,
+                                smoothY,
+                                calculateWidth(
+                                        lastPressure
+                                )
+                        )
+                );
 
                 invalidate();
 
@@ -89,7 +123,7 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_MOVE:
 
-                processMove(event);
+                processMotion(event);
 
                 invalidate();
 
@@ -97,10 +131,7 @@ public class DrawingView extends View {
 
             case MotionEvent.ACTION_UP:
 
-                smoothX = event.getX();
-                smoothY = event.getY();
-
-                path.lineTo(smoothX, smoothY);
+                processMotion(event);
 
                 invalidate();
 
@@ -112,17 +143,20 @@ public class DrawingView extends View {
         }
     }
 
-    private void processMove(MotionEvent event) {
+    private void processMotion(
+            MotionEvent event
+    ) {
 
-        int historySize = event.getHistorySize();
+        int history =
+                event.getHistorySize();
 
-        for (int i = 0; i < historySize; i++) {
+        for (int i = 0; i < history; i++) {
 
-            float x = event.getHistoricalX(i);
-            float y = event.getHistoricalY(i);
-            float pressure = event.getHistoricalPressure(i);
-
-            addPoint(x, y, pressure);
+            addPoint(
+                    event.getHistoricalX(i),
+                    event.getHistoricalY(i),
+                    event.getHistoricalPressure(i)
+            );
         }
 
         addPoint(
@@ -146,6 +180,13 @@ public class DrawingView extends View {
                 (y - smoothY) *
                 SMOOTHING;
 
+        float filteredPressure =
+                lastPressure * 0.35f +
+                pressure * 0.65f;
+
+        lastPressure =
+                filteredPressure;
+
         float velocityX =
                 smoothX - lastX;
 
@@ -160,19 +201,13 @@ public class DrawingView extends View {
 
         float velocityFactor =
                 Math.max(
-                        0.55f,
+                        0.65f,
                         Math.min(
                                 1.0f,
-                                1.0f - velocity * 0.015f
+                                1.0f -
+                                velocity * 0.01f
                         )
                 );
-
-        float filteredPressure =
-                lastPressure * 0.35f +
-                pressure * 0.65f;
-
-        lastPressure =
-                filteredPressure;
 
         float width =
                 MIN_WIDTH +
@@ -180,23 +215,26 @@ public class DrawingView extends View {
                         * filteredPressure
                         * velocityFactor;
 
-        paint.setStrokeWidth(width);
-
-        float midX =
-                (lastX + smoothX) / 2f;
-
-        float midY =
-                (lastY + smoothY) / 2f;
-
-        path.quadTo(
-                lastX,
-                lastY,
-                midX,
-                midY
+        points.add(
+                new StrokePoint(
+                        smoothX,
+                        smoothY,
+                        width
+                )
         );
 
         lastX = smoothX;
+
         lastY = smoothY;
+    }
+
+    private float calculateWidth(
+            float pressure
+    ) {
+
+        return MIN_WIDTH +
+                (MAX_WIDTH - MIN_WIDTH)
+                        * pressure;
     }
 
     private float getPressure(
@@ -207,6 +245,7 @@ public class DrawingView extends View {
                 event.getPressure();
 
         if (pressure <= 0f) {
+
             pressure = 0.5f;
         }
 
@@ -217,5 +256,27 @@ public class DrawingView extends View {
                         pressure
                 )
         );
+    }
+
+    private static class StrokePoint {
+
+        final float x;
+
+        final float y;
+
+        final float width;
+
+        StrokePoint(
+                float x,
+                float y,
+                float width
+        ) {
+
+            this.x = x;
+
+            this.y = y;
+
+            this.width = width;
+        }
     }
 }
