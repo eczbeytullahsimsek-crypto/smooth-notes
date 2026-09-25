@@ -1,11 +1,11 @@
 package com.smoothnotes.app
 
+import android.app.Activity
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.TextView
-import androidx.activity.ComponentActivity
 
-class MainActivity : ComponentActivity() {
+class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
